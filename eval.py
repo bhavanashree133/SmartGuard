@@ -34,9 +34,9 @@ def main():
     # -----------------------------
     # Load trained artifacts
     # -----------------------------
-    model = joblib.load("smartguard_final_model.pkl")
-    vectorizer = joblib.load("smartguard_vectorizer.pkl")
-    label_encoder = joblib.load("smartguard_label_encoder.pkl")
+    model = joblib.load("Models/smartguard_final_model.pkl")
+    vectorizer = joblib.load("Models/smartguard_vectorizer.pkl")
+    label_encoder = joblib.load("Models/smartguard_label_encoder.pkl")
 
     # -----------------------------
     # Load baseline red-team results

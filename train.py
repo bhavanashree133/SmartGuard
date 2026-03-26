@@ -86,9 +86,9 @@ def main():
     print(classification_report(y_test, test_pred, target_names=label_encoder.classes_))
 
     # Save artifacts
-    joblib.dump(model, "smartguard_final_model.pkl")
-    joblib.dump(vectorizer, "smartguard_vectorizer.pkl")
-    joblib.dump(label_encoder, "smartguard_label_encoder.pkl")
+    joblib.dump(model, "Models/smartguard_final_model.pkl")
+    joblib.dump(vectorizer, "Models/smartguard_vectorizer.pkl")
+    joblib.dump(label_encoder, "Models/smartguard_label_encoder.pkl")
 
     print("\nSaved artifacts:")
     print("- smartguard_final_model.pkl")

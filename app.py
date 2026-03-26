@@ -166,9 +166,9 @@ div[data-testid="stDataFrame"] {
 # -----------------------------
 # Load artifacts
 # -----------------------------
-model = joblib.load("smartguard_final_model.pkl")
-vectorizer = joblib.load("smartguard_vectorizer.pkl")
-label_encoder = joblib.load("smartguard_label_encoder.pkl")
+model = joblib.load("Models/smartguard_final_model.pkl")
+vectorizer = joblib.load("Models/smartguard_vectorizer.pkl")
+label_encoder = joblib.load("Models/smartguard_label_encoder.pkl")
 
 # Use official evaluation results for dashboard metrics
 df = pd.read_csv("Data/trackb_model_results.csv")

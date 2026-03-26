@@ -13,7 +13,7 @@ SEED = 42
 
 def main():
     print("Loading dataset...")
-    df = pd.read_csv("smartguard_trackB_dataset.csv")
+    df = pd.read_csv("Data/smartguard_trackB_dataset.csv")
 
     X = df["prompt"].astype(str)
     y = df["label"].astype(str)
