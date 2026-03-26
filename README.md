@@ -61,9 +61,10 @@ SmartGuard works in the following pipeline:
 3. The trained classifier predicts a category
 4. The category is mapped to **safe / unsafe**
 5. A threshold decides whether to **ALLOW** or **BLOCK**
-6. Results are shown in the Streamlit dashboard
-7. Evaluation scripts compare the trained model against the baseline on the official red-team suite
-
+6. If SAFE → prompt is forwarded to a live LLM (Groq API) and response is generated
+7. If UNSAFE → prompt is blocked with a reason and category
+8. Results are shown in the Streamlit dashboard
+9. Evaluation scripts compare the trained model against the baseline on the official red-team suite
 ---
 
 ## 5) Components Implemented
@@ -98,6 +99,15 @@ The Streamlit dashboard shows:
 - false positives
 - overall accuracy
 - threshold trade-off curves
+
+### Component 5 — LLM Integration (Firewall Layer)
+
+The system acts as a **firewall in front of a live LLM (Groq API)**:
+
+- If a prompt is **safe**, it is forwarded to the LLM and a real response is generated  
+- If a prompt is **unsafe**, it is blocked before reaching the LLM  
+
+This ensures unsafe inputs never reach the model, implementing a true guardrail system.
 
 ---
 
@@ -382,7 +392,7 @@ SmartGuard is still a **lightweight academic prototype**, not a complete product
 Current limitations:
 - limited multilingual coverage
 - limited long-context/document attack coverage
-- no full live LLM backend integration yet in the dashboard
+- uses external API (Groq) instead of fully self-hosted LLM
 - some edge cases still slip through or get overblocked
 
 ---

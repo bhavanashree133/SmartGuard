@@ -1,9 +1,11 @@
-import streamlit as st
-import pandas as pd
+import os
 import numpy as np
+import pandas as pd
 import joblib
+import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from groq import Groq
 
 # -----------------------------
 # Page config
@@ -164,19 +166,62 @@ div[data-testid="stDataFrame"] {
 """, unsafe_allow_html=True)
 
 # -----------------------------
+# Paths
+# -----------------------------
+MODEL_PATH = "Models/smartguard_final_model.pkl"
+VECTORIZER_PATH = "Models/smartguard_vectorizer.pkl"
+LABEL_ENCODER_PATH = "Models/smartguard_label_encoder.pkl"
+RESULTS_PATH = "Data/trackb_model_results.csv"
+DATASET_PATH = "Data/smartguard_prompt_classifier_dataset.csv"
+
+# -----------------------------
 # Load artifacts
 # -----------------------------
-model = joblib.load("Models/smartguard_final_model.pkl")
-vectorizer = joblib.load("Models/smartguard_vectorizer.pkl")
-label_encoder = joblib.load("Models/smartguard_label_encoder.pkl")
+model = joblib.load(MODEL_PATH)
+vectorizer = joblib.load(VECTORIZER_PATH)
+label_encoder = joblib.load(LABEL_ENCODER_PATH)
 
-# Use official evaluation results for dashboard metrics
-df = pd.read_csv("Data/trackb_model_results.csv")
-#df = pd.read_csv("trackb_model_results.csv")
+# Official evaluation results for dashboard metrics
+df = pd.read_csv(RESULTS_PATH)
+df["label"] = df["true_binary_label"].astype(str).str.lower().str.strip()
+df["predicted_label"] = df["predicted_binary_label"].astype(str).str.lower().str.strip()
+df["confidence"] = pd.to_numeric(df["confidence"], errors="coerce").fillna(0.0)
 
-# Normalize columns for dashboard use
-df["label"] = df["true_binary_label"].astype(str).str.lower()
-df["predicted_label"] = df["predicted_binary_label"].astype(str).str.lower()
+# Training dataset for dataset tab
+if os.path.exists(DATASET_PATH):
+    dataset_df = pd.read_csv(DATASET_PATH)
+else:
+    dataset_df = pd.DataFrame()
+
+# -----------------------------
+# Groq client
+# -----------------------------
+groq_api_key = os.environ.get("GROQ_API_KEY")
+client = Groq(api_key=groq_api_key) if groq_api_key else None
+
+def call_llm(prompt: str) -> str:
+    if client is None:
+        return "Groq API key not found. Please export GROQ_API_KEY in terminal first."
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful, safe assistant. Answer clearly and briefly."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Groq API error: {e}"
 
 # -----------------------------
 # Risk patterns
@@ -270,6 +315,33 @@ ROLEPLAY_CUES = [
 def contains_any(text: str, phrases: list[str]) -> list[str]:
     return [p for p in phrases if p in text]
 
+def map_rule_category(raw_category: str) -> str:
+    mapping = {
+        "high_risk_rule_match": "prompt_injection",
+        "disguised_harmful_intent": "toxic_content",
+        "pressure_based_attack": "jailbreak",
+        "roleplay_attack": "jailbreak",
+    }
+    return mapping.get(raw_category, raw_category)
+
+def map_model_category(raw_label: str, prompt: str) -> str:
+    label = str(raw_label).strip().lower()
+    text = prompt.lower()
+
+    if label in ["safe", "benign"]:
+        return "safe"
+
+    if any(x in text for x in ["private data", "password", "aadhaar", "bank details", "credentials", "passport"]):
+        return "pii_extraction"
+
+    if any(x in text for x in ["system prompt", "ignore instructions", "hidden prompt", "override", "document as highest priority"]):
+        return "prompt_injection"
+
+    if any(x in text for x in ["act as", "pretend you are", "unrestricted", "no limitations", "jailbreak", "dan"]):
+        return "jailbreak"
+
+    return "toxic_content"
+
 def rule_based_guard(prompt: str):
     text = prompt.lower().strip()
 
@@ -320,9 +392,11 @@ def predict_with_threshold(prompt: str, threshold: float = 0.4) -> dict:
 
     rule_result = rule_based_guard(prompt)
     if rule_result["triggered"]:
+        official_category = map_rule_category(rule_result["category"])
         return {
             "prompt": prompt,
-            "predicted_category": rule_result["category"],
+            "predicted_category": official_category,
+            "raw_category": rule_result["category"],
             "confidence": 1.0000,
             "decision": "BLOCK",
             "reason": rule_result["reason"]
@@ -334,16 +408,19 @@ def predict_with_threshold(prompt: str, threshold: float = 0.4) -> dict:
     probs = model.predict_proba(vec)[0]
     confidence = float(np.max(probs))
 
-    if pred_label == "safe" and confidence >= threshold:
+    if pred_label in ["safe", "benign"] and confidence >= threshold:
         decision = "ALLOW"
+        official_category = "safe"
         reason = f"Predicted safe with confidence {confidence:.4f} ≥ threshold {threshold:.1f}"
     else:
         decision = "BLOCK"
+        official_category = map_model_category(pred_label, prompt)
         reason = f"Predicted {pred_label} or confidence {confidence:.4f} < threshold {threshold:.1f}"
 
     return {
         "prompt": prompt,
-        "predicted_category": pred_label,
+        "predicted_category": official_category,
+        "raw_category": str(pred_label),
         "confidence": round(confidence, 4),
         "decision": decision,
         "reason": reason
@@ -396,8 +473,8 @@ threshold_value = st.sidebar.slider("Strictness Threshold", 0.1, 0.9, 0.4, 0.1)
 st.sidebar.markdown(
     """
     <div class="small-note">
-    Lower threshold → more prompts allowed<br>
-    Higher threshold → more conservative blocking
+    Lower threshold → stricter blocking<br>
+    Higher threshold → more prompts allowed
     </div>
     """,
     unsafe_allow_html=True
@@ -537,28 +614,16 @@ with tab1:
             st.write(f"**Final Decision:** {result['decision']}")
             st.write(f"**Reason:** {result['reason']}")
 
+            st.markdown("### 🤖 LLM Response")
             if result["decision"] == "BLOCK":
-               st.error("Prompt blocked by SmartGuard.")
-               st.write("🚫 This request was blocked due to safety concerns.")
-
+                st.error("Prompt blocked by SmartGuard.")
+                st.write("🚫 This request was blocked due to safety concerns.")
             else:
                 st.success("Prompt allowed by SmartGuard.")
+                llm_response = call_llm(user_prompt)
+                st.write(llm_response)
 
-    # -----------------------------
-    # Simulated LLM Response
-    # -----------------------------
-    st.markdown("### 🤖 LLM Response")
-
-    # Simple mock response (for demo)
-    fake_response = f"""
-    This is a simulated safe response to your prompt:
-
-    "{user_prompt}"
-
-    (In a real system, this would be generated by a connected LLM like GPT.)
-    """
-
-    st.write(fake_response)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # -----------------------------
 # TAB 2 - Metrics & Curves
@@ -626,14 +691,15 @@ with tab2:
             names="Decision",
             values="Count",
             hole=0.62,
-            title="ALLOW vs BLOCK Distribution"
+            title="ALLOW vs BLOCK Distribution",
+            color="Decision",
+            color_discrete_map={"ALLOW": "#10b981", "BLOCK": "#ef4444"}
         )
         fig_donut.update_traces(textinfo="percent+label")
         fig_donut.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             font=dict(color="white"),
             height=400
-            
         )
         st.plotly_chart(fig_donut, use_container_width=True)
 
@@ -733,8 +799,14 @@ with tab4:
     left, right = st.columns([1, 1])
 
     with left:
-        category_counts = df["label"].value_counts().reset_index()
-        category_counts.columns = ["Category", "Count"]
+        if not dataset_df.empty and "label" in dataset_df.columns:
+            category_series = dataset_df["label"].astype(str).str.lower().str.strip()
+            category_display = category_series.replace({"benign": "safe"})
+            category_counts = category_display.value_counts().reset_index()
+            category_counts.columns = ["Category", "Count"]
+        else:
+            category_counts = df["label"].value_counts().reset_index()
+            category_counts.columns = ["Category", "Count"]
 
         fig_cat = px.bar(
             category_counts,
@@ -755,8 +827,14 @@ with tab4:
         st.plotly_chart(fig_cat, use_container_width=True)
 
     with right:
-        safe_count = int((df["label"] == "safe").sum())
-        unsafe_count = len(df) - safe_count
+        if not dataset_df.empty and "label" in dataset_df.columns:
+            label_series = dataset_df["label"].astype(str).str.lower().str.strip()
+            safe_count = int(label_series.isin(["safe", "benign"]).sum())
+            unsafe_count = len(label_series) - safe_count
+        else:
+            label_series = df["label"].astype(str).str.lower().str.strip()
+            safe_count = int((label_series == "safe").sum())
+            unsafe_count = len(label_series) - safe_count
 
         fig_safe = px.pie(
             names=["Safe", "Unsafe"],
@@ -774,5 +852,9 @@ with tab4:
         )
         st.plotly_chart(fig_safe, use_container_width=True)
 
-    st.dataframe(df.head(25), use_container_width=True)
+    if not dataset_df.empty:
+        st.dataframe(dataset_df.head(25), use_container_width=True)
+    else:
+        st.dataframe(df.head(25), use_container_width=True)
+
     st.markdown('</div>', unsafe_allow_html=True)
